@@ -450,14 +450,6 @@ proc logicalLines(code: string): seq[LogicalLine] =
     result.add(LogicalLine(text: accumulated, indent: indent,
                            sourceLine: startLine))
 
-proc parseScriptExpression(code: string,
-                           context: var EvalContext): ScriptValue =
-  var parser = Parser(tokens: tokenize(code), pos: 0)
-  result = parser.parseExpression(context)
-  if parser.current.kind != tokenEnd:
-    raise newException(ValueError, "unexpected token '" &
-      parser.current.text & "'")
-
 proc invokeProcedure(context: var EvalContext, name: string): ScriptValue =
   for procedure in context.procedures:
     if procedure.name != name:
