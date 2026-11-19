@@ -1,7 +1,6 @@
-import std/[times]
-import ../core/[sdf_ast, params, script_engine]
-import ../compiler/glsl_gen
-import ../graphics/[camera, renderer, mesher]
+import std/os
+import ../core/[sdf_ast, script_engine]
+import ../graphics/[camera, renderer, viewport]
 
 type
   ConsoleLine* = object
@@ -37,11 +36,29 @@ proc compileActiveScript*(window: var MainWindow): ScriptResult =
     window.renderer.metrics.nodeCount = result.arena.nodes.len
     window.renderer.metrics.scriptMs = result.elapsedMs
 
-proc runMainWindow* =
-  var window = initMainWindow()
-  let result = window.compileActiveScript()
+proc runMainWindow*(filePath = "examples/01_hola_mundo.nims"): int =
+  var window = initMainWindow(filePath)
+  let scriptResult = window.compileActiveScript()
+  for line in window.console:
+    if line.isError:
+      stderr.writeLine(filePath & ":" & $line.text)
+      return 1
+    echo line.text
+  if scriptResult.root < 0:
+    stderr.writeLine("No render(...) root found in " & filePath)
+    return 1
+
   echo "NimCAD-SDF 0.1.0"
   echo "Loaded: " & window.activeFile
-  echo "SDF nodes: " & $result.arena.nodes.len
+  echo "SDF nodes: " & $scriptResult.arena.nodes.len
   echo "GLSL source ready: " & $window.renderer.shaderSource.len & " bytes"
-  echo "Merenda UI host: enable graphical backend with -d:nimcadMerenda"
+  echo "Opening 3D viewport (middle-drag: orbit, Shift+middle-drag: pan, wheel: zoom, Esc: close)"
+
+  let bounds = aabbFor(scriptResult.arena.nodes[scriptResult.root],
+                       scriptResult.arena.nodes)
+  try:
+    runViewport(window.renderer.shaderSource, "NimCAD-SDF - " &
+      lastPathPart(filePath), bounds)
+  except IOError as error:
+    stderr.writeLine(error.msg)
+    return 1

@@ -1,7 +1,6 @@
 import std/[strutils]
 import ../core/sdf_ast
 import ../compiler/glsl_gen
-import camera
 
 type
   ViewMode* = enum vmShaded, vmZebra, vmHeatmap, vmNormals
@@ -136,4 +135,5 @@ proc buildFragmentSource*(arena: SDFArena): string =
   let mapSource = mapProgram.source.replace("#version 430\n", "")
                               .replace("in vec2 v_uv;\n", "")
                               .replace("out vec4 fragColor;\n", "")
-  RAYMARCH_TEMPLATE & "\n" & mapSource
+  let raymarch = RAYMARCH_TEMPLATE.replace("#version 430\n", "")
+  "#version 430\n" & mapSource & "\n" & raymarch

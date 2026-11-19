@@ -51,16 +51,17 @@ proc generateMap*(arena: SDFArena): GLSLProgram =
       body.add "  float d_" & $nodeId & " = sdEllipsoid(" & pv & ", " & node.size.glVec & ");\n"
       body.add "  vec3 c_" & $nodeId & " = " & node.material.glVec & ";\n"
     of nkTranslate:
-      discard emit(node.a, pv)
       let childP = "p_" & $nodeId
-      body.insert("  vec3 " & childP & " = " & pv & " - " & node.offset.glVec & ";\n", body.len)
-      # Translation is represented as transformed input for the child; emit above is reparable in the body order.
-      body.add "  float d_" & $nodeId & " = d_" & $node.a & ";\n"
-      body.add "  vec3 c_" & $nodeId & " = c_" & $node.a & ";\n"
+      body.add "  vec3 " & childP & " = " & pv & " - " & node.offset.glVec & ";\n"
+      let child = emit(node.a, childP)
+      body.add "  float d_" & $nodeId & " = " & child.distance & ";\n"
+      body.add "  vec3 c_" & $nodeId & " = " & child.color & ";\n"
     of nkScale:
-      discard emit(node.a, pv)
-      body.add "  float d_" & $nodeId & " = d_" & $node.a & " * " & node.scale.fstr & ";\n"
-      body.add "  vec3 c_" & $nodeId & " = c_" & $node.a & ";\n"
+      let childP = "p_" & $nodeId
+      body.add "  vec3 " & childP & " = " & pv & " / " & node.scale.fstr & ";\n"
+      let child = emit(node.a, childP)
+      body.add "  float d_" & $nodeId & " = " & child.distance & " * " & node.scale.fstr & ";\n"
+      body.add "  vec3 c_" & $nodeId & " = " & child.color & ";\n"
     of nkUnion, nkSubtraction, nkIntersection,
        nkSmoothUnion, nkSmoothSubtraction, nkSmoothIntersection:
       let da = emit(node.a, pv)

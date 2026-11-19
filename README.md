@@ -12,10 +12,29 @@ nimble build
 nimble run nimcad
 ```
 
-The default entry point executes the bundled Hello World script and prints the
-generated GPU shader size. The graphical Merenda/OpenGL backend is activated
-through the Merenda package and `-d:nimcadMerenda` on platforms with a supported
-window system.
+On Linux, the bundled GLFW backend also needs X11 development headers and
+libraries. On Debian/Ubuntu, install them with:
+
+```sh
+sudo apt install libx11-dev libxcursor-dev libxrandr-dev libxinerama-dev \
+  libxi-dev libxxf86vm-dev
+```
+
+Pass a `.nims` model path to open it in the interactive OpenGL viewport:
+
+```sh
+nimble run nimcad -- examples/01_hola_mundo.nims
+./bin/nimcad examples/01_hola_mundo.nims
+# Or use the default example:
+./bin/nimcad
+```
+
+The viewport supports middle-button drag to orbit, Shift+middle-button drag to
+pan, the wheel to zoom, and Esc to close. This first step supports a subset of
+the modeling DSL (including spheres, boxes, cylinders, `smoothUnion`, `+`,
+`-`, `.move(...)`, and `.color(...)`); it does not execute arbitrary NimScript
+or procedure declarations yet. The broader Merenda CAD interface is not part
+of this viewport yet.
 
 ### Example scripts
 
