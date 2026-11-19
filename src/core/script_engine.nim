@@ -421,7 +421,9 @@ proc logicalLines(code: string): seq[LogicalLine] =
   var parenDepth = 0
   var startLine = 0
   var indent = 0
-  for lineNumber, rawLine in code.splitLines():
+  var lineNumber = 0
+  for rawLine in code.splitLines():
+    inc lineNumber
     let line = uncomment(rawLine)
     if line.strip().len == 0:
       continue
@@ -429,7 +431,7 @@ proc logicalLines(code: string): seq[LogicalLine] =
     while leading < rawLine.len and rawLine[leading] in {' ', '\t'}:
       inc leading
     if accumulated.len == 0:
-      startLine = lineNumber + 1
+      startLine = lineNumber
       indent = leading
     else:
       accumulated.add(" ")
