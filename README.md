@@ -30,11 +30,12 @@ nimble run nimcad -- examples/01_hola_mundo.nims
 ```
 
 The viewport supports middle-button drag to orbit, Shift+middle-button drag to
-pan, the wheel to zoom, and Esc to close. This first step supports a subset of
-the modeling DSL (including spheres, boxes, cylinders, `smoothUnion`, `+`,
-`-`, `.move(...)`, and `.color(...)`); it does not execute arbitrary NimScript
-or procedure declarations yet. The broader Merenda CAD interface is not part
-of this viewport yet.
+pan, the wheel to zoom, and Esc to close. The line-oriented modeling DSL
+supports zero-argument procedures, parameters, spheres, boxes, cylinders,
+boolean and smooth operations, finite and polar repetition, sinusoidal
+displacement, twisting, rounding, coloring, and transforms. It does not execute
+arbitrary NimScript. The broader Merenda CAD interface is not part of this
+viewport yet.
 
 ### Example scripts
 

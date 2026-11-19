@@ -39,9 +39,16 @@ type
   Symbol = object
     name: string
     value: ScriptValue
+  Procedure = object
+    name: string
+    body: seq[string]
+  LogicalLine = object
+    text: string
+    indent, sourceLine: int
   EvalContext = object
     arena: SDFArena
     symbols: seq[Symbol]
+    procedures: seq[Procedure]
     params: seq[Param]
     output: seq[string]
     errors: seq[ScriptError]
@@ -111,15 +118,15 @@ proc expect(parser: var Parser, text: string) =
     raise newException(ValueError, "expected '" & text & "'")
 
 proc lookup(context: EvalContext, name: string): ScriptValue =
-  for symbol in context.symbols:
-    if symbol.name == name:
-      return symbol.value
+  for index in countdown(context.symbols.high, 0):
+    if context.symbols[index].name == name:
+      return context.symbols[index].value
   raise newException(ValueError, "unknown identifier '" & name & "'")
 
 proc assign(context: var EvalContext, name: string, value: ScriptValue) =
-  for symbol in mitems(context.symbols):
-    if symbol.name == name:
-      symbol.value = value
+  for index in countdown(context.symbols.high, 0):
+    if context.symbols[index].name == name:
+      context.symbols[index].value = value
       return
   context.symbols.add(Symbol(name: name, value: value))
 
@@ -159,8 +166,16 @@ proc argNumber(args: openArray[Argument], name: string, position: int,
       inc index
   fallback
 
+proc asVec3(value: ScriptValue): Vec3 =
+  if value.kind != valueTuple or value.items.len != 3:
+    raise newException(ValueError, "expected a three-component tuple")
+  vec3(value.items[0].asNumber(), value.items[1].asNumber(),
+         value.items[2].asNumber())
+
 proc parseExpression(parser: var Parser,
                      context: var EvalContext): ScriptValue
+
+proc invokeProcedure(context: var EvalContext, name: string): ScriptValue
 
 proc parseArguments(parser: var Parser,
                     context: var EvalContext): seq[Argument] =
@@ -193,6 +208,9 @@ proc applyCall(name: string, args: openArray[Argument],
     of "round":
       return nodeValue(context.arena.roundNode(child,
         argNumber(args, "r", 0, 0)))
+    of "onion":
+      return nodeValue(context.arena.onion(child,
+        argNumber(args, "thickness", 0, 1)))
     of "color":
       return nodeValue(context.arena.withColor(child,
         argNumber(args, "r", 0, 0.75), argNumber(args, "g", 1, 0.75),
@@ -200,8 +218,24 @@ proc applyCall(name: string, args: openArray[Argument],
     of "repeatPolar":
       return nodeValue(context.arena.repeatPolar(child,
         int(argNumber(args, "count", 0, 1))))
+    of "twist":
+      return nodeValue(context.arena.twist(child,
+        argNumber(args, "k", 0, 0)))
+    of "bend":
+      return nodeValue(context.arena.bend(child,
+        argNumber(args, "k", 0, 0)))
+    of "scale":
+      return nodeValue(context.arena.scaleNode(child,
+        argNumber(args, "s", 0, 1)))
     else:
       raise newException(ValueError, "unsupported shape method '" & name & "'")
+
+  for procedure in context.procedures:
+    if procedure.name == name:
+      if args.len != 0:
+        raise newException(ValueError,
+          "procedure '" & name & "' does not accept arguments")
+      return context.invokeProcedure(name)
 
   case name
   of "sphere":
@@ -230,6 +264,18 @@ proc applyCall(name: string, args: openArray[Argument],
       of "smoothSub": nkSmoothSubtraction
       else: nkSmoothIntersection
     return nodeValue(context.arena.booleanNode(kind, a, b, k))
+  of "displace":
+    let child = argValue(args, "shape", 0).asNode()
+    let expression = argValue(args, "expression", 1)
+    if expression.kind != valueString:
+      raise newException(ValueError, "displacement must be a string")
+    return nodeValue(context.arena.displace(child, expression.text))
+  of "repeatFinite":
+    let child = argValue(args, "shape", 0).asNode()
+    let spacing = argValue(args, "spacing", 1).asVec3()
+    let count = argValue(args, "count", 2).asVec3()
+    return nodeValue(context.arena.repeatFinite(child,
+      spacing.x, spacing.y, spacing.z, count.x, count.y, count.z))
   of "render":
     let root = argValue(args, "shape", 0).asNode()
     context.root = root
@@ -370,16 +416,22 @@ proc uncomment(line: string): string =
     else:
       escaped = false
 
-proc evalLineScript*(code: string): ScriptResult =
-  var context = EvalContext(arena: initSDFArena(), params: @[], output: @[],
-                            errors: @[], root: -1)
-  let started = epochTime()
-  var logicalLines: seq[string] = @[]
+proc logicalLines(code: string): seq[LogicalLine] =
   var accumulated = ""
   var parenDepth = 0
-  for rawLine in code.splitLines():
+  var startLine = 0
+  var indent = 0
+  for lineNumber, rawLine in code.splitLines():
     let line = uncomment(rawLine)
-    if accumulated.len > 0:
+    if line.strip().len == 0:
+      continue
+    var leading = 0
+    while leading < rawLine.len and rawLine[leading] in {' ', '\t'}:
+      inc leading
+    if accumulated.len == 0:
+      startLine = lineNumber + 1
+      indent = leading
+    else:
       accumulated.add(" ")
     accumulated.add(line.strip())
     for c in line:
@@ -388,15 +440,90 @@ proc evalLineScript*(code: string): ScriptResult =
       elif c == ')':
         dec parenDepth
     if parenDepth <= 0:
-      logicalLines.add(accumulated)
+      result.add(LogicalLine(text: accumulated, indent: indent,
+                             sourceLine: startLine))
       accumulated = ""
       parenDepth = 0
   if accumulated.len > 0:
-    logicalLines.add(accumulated)
+    result.add(LogicalLine(text: accumulated, indent: indent,
+                           sourceLine: startLine))
 
-  for lineNumber, sourceLine in logicalLines:
-    let line = sourceLine.strip()
+proc parseScriptExpression(code: string,
+                           context: var EvalContext): ScriptValue =
+  var parser = Parser(tokens: tokenize(code), pos: 0)
+  result = parser.parseExpression(context)
+  if parser.current.kind != tokenEnd:
+    raise newException(ValueError, "unexpected token '" &
+      parser.current.text & "'")
+
+proc invokeProcedure(context: var EvalContext, name: string): ScriptValue =
+  for procedure in context.procedures:
+    if procedure.name != name:
+      continue
+    let savedSymbols = context.symbols
+    context.symbols = @[]
+    for symbol in savedSymbols:
+      context.symbols.add(symbol)
+    try:
+      for sourceLine in procedure.body:
+        let line = sourceLine.strip()
+        if line.startsWith("let ") or line.startsWith("var "):
+          let equals = line.find('=')
+          if equals < 0:
+            raise newException(ValueError, "expected '=' in declaration")
+          let variableName = line[4 ..< equals].strip()
+          let value = parseScriptExpression(line[equals + 1 .. ^1], context)
+          context.symbols.add(Symbol(name: variableName, value: value))
+        elif line.startsWith("return "):
+          result = parseScriptExpression(line[7 .. ^1], context)
+          return
+        elif line.contains('='):
+          let equals = line.find('=')
+          context.assign(line[0 ..< equals].strip(),
+            parseScriptExpression(line[equals + 1 .. ^1], context))
+        else:
+          discard parseScriptExpression(line, context)
+      raise newException(ValueError,
+        "procedure '" & name & "' did not return a value")
+    finally:
+      context.symbols = savedSymbols
+  raise newException(ValueError, "unknown procedure '" & name & "'")
+
+proc evalLineScript*(code: string): ScriptResult =
+  var context = EvalContext(arena: initSDFArena(), params: @[], output: @[],
+                            errors: @[], root: -1)
+  let started = epochTime()
+  let lines = logicalLines(code)
+  var lineIndex = 0
+  while lineIndex < lines.len:
+    let logical = lines[lineIndex]
+    let line = logical.text.strip()
     if line.len == 0 or line.startsWith("import "):
+      inc lineIndex
+      continue
+    if logical.indent == 0 and line.startsWith("proc "):
+      let openParen = line.find('(')
+      if openParen < 0:
+        context.errors.add(ScriptError(line: logical.sourceLine, column: 1,
+          message: "expected a procedure parameter list"))
+        inc lineIndex
+        continue
+      let procedureName = line[5 ..< openParen].strip()
+      if procedureName.len == 0 or not line.endsWith("="):
+        context.errors.add(ScriptError(line: logical.sourceLine, column: 1,
+          message: "expected a procedure declaration ending with '='"))
+        inc lineIndex
+        continue
+      var procedure = Procedure(name: procedureName, body: @[])
+      inc lineIndex
+      while lineIndex < lines.len and lines[lineIndex].indent > logical.indent:
+        procedure.body.add(lines[lineIndex].text)
+        inc lineIndex
+      if procedure.body.len == 0:
+        context.errors.add(ScriptError(line: logical.sourceLine, column: 1,
+          message: "procedure body must not be empty"))
+      else:
+        context.procedures.add(procedure)
       continue
     try:
       if line.startsWith("let ") or line.startsWith("var "):
@@ -410,9 +537,9 @@ proc evalLineScript*(code: string): ScriptResult =
                                                     context))
       elif line.startsWith("render(") or line.startsWith("echo("):
         discard parseScriptExpression(line, context)
-      elif line.startsWith("proc ") or line.startsWith("return "):
+      elif line.startsWith("return "):
         raise newException(ValueError,
-          "procedure declarations are not supported by the current DSL runner")
+          "return is only supported inside a procedure")
       elif line.contains('='):
         let equals = line.find('=')
         context.assign(line[0 ..< equals].strip(),
@@ -420,8 +547,9 @@ proc evalLineScript*(code: string): ScriptResult =
       else:
         discard parseScriptExpression(line, context)
     except ValueError as error:
-      context.errors.add(ScriptError(line: lineNumber + 1, column: 1,
+      context.errors.add(ScriptError(line: logical.sourceLine, column: 1,
                                      message: error.msg))
+    inc lineIndex
 
   context.arena.root = context.root
   result = ScriptResult(arena: context.arena, params: context.params,

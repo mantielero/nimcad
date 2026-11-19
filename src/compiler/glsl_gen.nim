@@ -1,4 +1,4 @@
-import strutils
+import std/[math, strutils]
 import ../core/sdf_ast
 import glsl_templates
 
@@ -12,9 +12,6 @@ proc fstr(v: float): string =
 
 proc glVec(v: Vec3): string =
   "vec3(" & v.x.fstr & ", " & v.y.fstr & ", " & v.z.fstr & ")"
-
-proc rotatePoint(v: Vec3): string =
-  "p.yzx"
 
 proc generateMap*(arena: SDFArena): GLSLProgram =
   var body = newStringOfCap(arena.nodes.len * 180)
@@ -61,6 +58,61 @@ proc generateMap*(arena: SDFArena): GLSLProgram =
       body.add "  vec3 " & childP & " = " & pv & " / " & node.scale.fstr & ";\n"
       let child = emit(node.a, childP)
       body.add "  float d_" & $nodeId & " = " & child.distance & " * " & node.scale.fstr & ";\n"
+      body.add "  vec3 c_" & $nodeId & " = " & child.color & ";\n"
+    of nkRepeatFinite:
+      let childP = "p_" & $nodeId
+      body.add "  vec3 spacing_" & $nodeId & " = " & node.spacing.glVec & ";\n"
+      body.add "  vec3 count_" & $nodeId & " = " & node.countVec.glVec & ";\n"
+      body.add "  vec3 " & childP & " = " & pv & " - spacing_" & $nodeId &
+        " * clamp(round(" & pv & " / max(abs(spacing_" & $nodeId &
+        "), vec3(0.000001))), -count_" & $nodeId & ", count_" & $nodeId &
+        ");\n"
+      let child = emit(node.a, childP)
+      body.add "  float d_" & $nodeId & " = " & child.distance & ";\n"
+      body.add "  vec3 c_" & $nodeId & " = " & child.color & ";\n"
+    of nkRepeatPolar:
+      let childP = "p_" & $nodeId
+      let sector = (2.0 * PI / float(max(node.count, 1))).fstr
+      body.add "  float sector_" & $nodeId & " = " & sector & ";\n"
+      body.add "  float angle_" & $nodeId & " = atan(" & pv & ".z, " &
+        pv & ".x);\n"
+      body.add "  float folded_" & $nodeId & " = mod(angle_" & $nodeId &
+        " + 0.5 * sector_" & $nodeId & ", sector_" & $nodeId &
+        ") - 0.5 * sector_" & $nodeId & ";\n"
+      body.add "  float radial_" & $nodeId & " = length(" & pv & ".xz);\n"
+      body.add "  vec3 " & childP & " = vec3(cos(folded_" & $nodeId &
+        ") * radial_" & $nodeId & ", " & pv & ".y, sin(folded_" & $nodeId &
+        ") * radial_" & $nodeId & ");\n"
+      let child = emit(node.a, childP)
+      body.add "  float d_" & $nodeId & " = " & child.distance & ";\n"
+      body.add "  vec3 c_" & $nodeId & " = " & child.color & ";\n"
+    of nkTwist:
+      let childP = "p_" & $nodeId
+      body.add "  float angle_" & $nodeId & " = " & node.twist.fstr &
+        " * " & pv & ".y;\n"
+      body.add "  vec3 " & childP & " = vec3(cos(angle_" & $nodeId &
+        ") * " & pv & ".x - sin(angle_" & $nodeId & ") * " & pv &
+        ".z, " & pv & ".y, sin(angle_" & $nodeId & ") * " & pv &
+        ".x + cos(angle_" & $nodeId & ") * " & pv & ".z);\n"
+      let child = emit(node.a, childP)
+      body.add "  float d_" & $nodeId & " = " & child.distance & ";\n"
+      body.add "  vec3 c_" & $nodeId & " = " & child.color & ";\n"
+    of nkBend:
+      let childP = "p_" & $nodeId
+      body.add "  float angle_" & $nodeId & " = " & node.bend.fstr &
+        " * " & pv & ".x;\n"
+      body.add "  vec3 " & childP & " = vec3(cos(angle_" & $nodeId &
+        ") * " & pv & ".x - sin(angle_" & $nodeId & ") * " & pv &
+        ".y, sin(angle_" & $nodeId & ") * " & pv & ".x + cos(angle_" &
+        $nodeId & ") * " & pv & ".y, " & pv & ".z);\n"
+      let child = emit(node.a, childP)
+      body.add "  float d_" & $nodeId & " = " & child.distance & ";\n"
+      body.add "  vec3 c_" & $nodeId & " = " & child.color & ";\n"
+    of nkDisplace:
+      let child = emit(node.a, pv)
+      let expression = node.expression.replace("p.", pv & ".")
+      body.add "  float d_" & $nodeId & " = " & child.distance &
+        " + (" & expression & ");\n"
       body.add "  vec3 c_" & $nodeId & " = " & child.color & ";\n"
     of nkUnion, nkSubtraction, nkIntersection,
        nkSmoothUnion, nkSmoothSubtraction, nkSmoothIntersection:

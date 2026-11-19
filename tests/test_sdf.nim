@@ -39,3 +39,28 @@ doAssert fragment.find("vec3 p_2 = p - vec3(12.000000") >= 0
 let invalidScript = evalLineScript("render(missingShape())")
 doAssert invalidScript.errors.len == 1
 doAssert invalidScript.root < 0
+
+for examplePath in [
+    "examples/02_brida_parametrica.nims",
+    "examples/03_giroide_organico.nims",
+    "examples/04_disipador_calor.nims"]:
+  let scriptResult = evalLineScript(readFile(examplePath))
+  doAssert scriptResult.errors.len == 0,
+    examplePath & ": " & $scriptResult.errors
+  doAssert scriptResult.root >= 0,
+    examplePath & " did not register a root shape"
+  let generated = generateMap(scriptResult.arena).source
+  case examplePath
+  of "examples/02_brida_parametrica.nims":
+    doAssert generated.find("sector_") >= 0
+    doAssert scriptResult.params.len == 4
+  of "examples/03_giroide_organico.nims":
+    doAssert generated.find("sin(") >= 0
+    doAssert generated.find("/ 12.0") >= 0
+    doAssert generated.find("angle_") >= 0
+    doAssert scriptResult.params.len == 2
+  of "examples/04_disipador_calor.nims":
+    doAssert generated.find("spacing_") >= 0
+    doAssert scriptResult.params.len == 2
+  else:
+    doAssert false
